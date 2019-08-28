@@ -1,0 +1,12 @@
+{
+    "name": "dive-into-webpack",
+    "version": "1.0.0",
+    "scripts": {
+        "build": "webpack"
+    },
+    "dependencies": {},
+    "devDependencies": {
+        "webpack": "^3.4.0",
+        "webpack-cli": "^3.3.7"
+    }
+}
