@@ -7,8 +7,8 @@ class FileListPlugin {
             for (var filename in compilation.assets) {
                 filelist += "- " + filename + "\n";
             }
-            const plugins = compiler.options.plugins; //所有插件名
-            filelist += ` all plugins: \n\n ${plugins}`;
+            // const plugins = compiler.options.plugins; //所有插件名
+            // filelist += ` all plugins: \n\n ${plugins}`;
             // 将文件名和插件名插入到新生成的文件中
             compilation.assets["filelist.md"] = {
                 source: function() {
