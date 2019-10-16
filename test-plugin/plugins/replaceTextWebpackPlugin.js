@@ -6,14 +6,14 @@ class ReplaceTextWebpackPlugin {
     // }
 
     apply(compiler) {
-        compiler.plugin("compilation", compilation => {
+        compiler.plugin('compilation', compilation => {
             compilation.moduleTemplate.plugin(
-                "module",
+                'module',
                 (source, module, options, dependencyTemplates) => {
                     if (/show.js/.test(module.request)) {
                         let newSource = source
                             .source()
-                            .replace(/Hello/g, "Fuck You");
+                            .replace(/Hello/g, 'Fk You');
                         return newSource;
                     } else {
                         return source;

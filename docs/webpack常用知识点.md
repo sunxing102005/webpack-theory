@@ -1,17 +1,11 @@
-### 新闻
-
-[重磅！滴滴跨端框架 Chameleon 1.0 正式发布](https://mp.weixin.qq.com/s/kl9JwiS5_IHIZUAW-hPJBQ)
-[前端也有 AI 代码补全工具了！](https://mp.weixin.qq.com/s/61lOnDzapIKrs_iXHUBVcw)
-[Vue 最黑暗的一天](https://mp.weixin.qq.com/s/TbW6jCYIhu_cUl7mVIRU9Q)
-
 ### 默认配置
 
 webpack 4 引入了零配置的概念，提供的默认配置来减少重复工作。
 development 模式下，默认开启了 NamedChunksPlugin 和 NamedModulesPlugin 方便调试，提供了更完整的错误信息，更快的重新编译的速度。
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20190826150031596.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzM2MjI4NDQy,size_16,color_FFFFFF,t_70)
 
-production 模式下，由于提供了 splitChunks 和 minimize，所以基本零配置，代码就会自动分割、压缩、优化，同时 webpack 也会自动帮你 [Scope Hoisting](https://segmentfault.com/a/1190000012600832)， [Tree-shaking ](https://juejin.im/post/5a4dc842518825698e7279a9)。
-注:v4.26 后，minimize 等于 true 默认使用的插件已由 UglifyJsPlugin 变为 TerserPlugin。
+production 模式下，自动开启 splitChunks 和 minimizer，所以基本零配置，代码就会自动分割、压缩、优化，同时 webpack 也会自动帮你 [Scope Hoisting](https://segmentfault.com/a/1190000012600832)， [Tree-shaking ](https://juejin.im/post/5a4dc842518825698e7279a9)。
+注:v4.26 后，minimizer 等于 true 默认使用的插件已由 UglifyJsPlugin 变为 TerserPlugin。
 主要默认配置：
 ![在这里插入图片描述](https://img-blog.csdnimg.cn/20190826150316482.png?x-oss-process=image/watermark,type_ZmFuZ3poZW5naGVpdGk,shadow_10,text_aHR0cHM6Ly9ibG9nLmNzZG4ubmV0L3FxXzM2MjI4NDQy,size_16,color_FFFFFF,t_70)
 详细的 mode 默认配置，可以看[这里](https://segmentfault.com/a/1190000013712229)。
@@ -32,7 +26,7 @@ chunkhash 是根据具体每一个模块文件自己的的内容包括它的依�
 
 ```javascript
 new MiniCssExtractPlugin({
-    filename: "static/css/[name]-css-[contenthash:5].css"
+    filename: 'static/css/[name]-css-[contenthash:5].css'
 });
 ```
 
@@ -45,7 +39,7 @@ css 中，这样引用一个图片
 
 ```css
 .image {
-    background-image: url("./test.png");
+    background-image: url('./test.png');
 }
 ```
 
@@ -64,7 +58,7 @@ module.exports = merge(baseConfig, {
 
 ```css
 .image {
-    background-image: url("https://someCDN/test.png");
+    background-image: url('https://someCDN/test.png');
 }
 ```
 
@@ -75,31 +69,8 @@ webpack 内置分包策略：
 
 -   新代码块可以被共享引用，或者这些模块都是来自 node_modules 文件夹里面
 -   新代码块大于 30kb（min+gziped 之前的体积）
--   按需加载的代码块，最大数量应该小于或者等于 5
+-   按需加载并发最大请求数, 应该小于或者等于 5
 -   初始加载的代码块，最大数量应该小于或等于 3
-
-例子：
-
-```javascript
-// entry.js
-import("./a");
-import("./b");
-// a.js
-import "./helpers"; // helpers is 40kb in size
-// ...
-// b.js
-import "./helpers";
-import "./more-helpers"; // more-helpers is also 40kb in size
-// ...
-```
-
-结果：webpack 会创建一个包含./helpers 的独立代码块，其他模块会依赖于它。
-为什么会这样打包：
-
--   条件 1：这个代码块会被两个导入(import)调用依赖（指的是 a.js 和 b.js）
--   条件 2：helpers 体积大于 30kb
--   条件 3：按需请求的数量是 2（小于 5）
--   条件 4：不会影响初始代码请求数量
 
 #### 配置
 
@@ -108,22 +79,22 @@ optimization: {
   splitChunks: {
      chunks: "async", // 必须三选一： "initial" | "all"(推荐) | "async" (默认就是async)
      minSize: 30000, // 最小尺寸，30000
-     minChunks: 1, // 最小 chunk ，默认1
+     minChunks: 1, // 最小 chunk ，默认1,只要被引用一次就分割出来
      maxAsyncRequests: 5, // 最大异步请求数， 默认5
      maxInitialRequests : 3, // 最大初始化请求书，默认3
      automaticNameDelimiter: '~',// 打包分隔符
      name: function(){}, // 打包后的名称，此选项可接收 function
      cacheGroups:{ // 这里开始设置缓存的 chunks
-         priority: 0, // 缓存组优先级
          vendor: { // key 为entry中定义的 入口名称
              chunks: "initial", // 必须三选一： "initial" | "all" | "async"(默认就是async)
              test: /react|lodash/, // 正则规则验证，如果符合就提取 chunk
              name: "vendor", // 要缓存的 分隔出来的 chunk 名称
+             priority: 0, // 缓存组优先级
              minSize: 30000,
              minChunks: 1,
              enforce: true,
-             maxAsyncRequests: 5, // 最大异步请求数， 默认1
-             maxInitialRequests : 3, // 最大初始化请求书，默认1
+             maxAsyncRequests: 5, // 最大异步请求数， 默认5
+             maxInitialRequests : 3, // 最大初始化请求书，默认3
              reuseExistingChunk: true // 可设置是否重用该chunk
          }
      }
@@ -131,7 +102,21 @@ optimization: {
  }
 ```
 
+##### minChunks
+
+最小 被引用的次数 ，默认 1,只要被引用一次就分割出来。
+
+##### maxAsyncRequests
+
+表示能异步请求的最大数量。比如异步请求一个文件，文件中还异步请求另一个文件，这时两个文件会分开打包，如果设置为 1，两个异步请求文件会打包在一起。详细解释可以看[webpack4 maxAsyncRequests 记录](https://www.jianshu.com/p/91e1082bce20)。
+
+##### maxInitialRequests
+
+代码分割以后，除去 runtime 所能生成的最多脚本数量。
+
 ##### chunks
+
+表示参与代码分割的模块类型
 
 demo 里，如果 chunks 赋值为：
 
@@ -146,13 +131,26 @@ cacheGroups：缓存组，可以设置缓存的 chunks。
 注意：
 
 -   cacheGroups 会继承和覆盖 splitChunks 的配置项，但是 test、priorty 和 reuseExistingChunk 只能用于配置缓存组。
--   cacheGroups 里的每一项最好都要加上 chunks 参数，不然可能打包不出来你想要的东西。
 
 ##### optimization.runtimeChunk
 
 通过 optimization.runtimeChunk: true 选项，webpack 会添加一个只包含运行时(runtime)额外代码块到每一个入口。
+打包后的 js 包括 webpackJsonp,checkDeferredModules,**webpack_require**,**webpack_require**.e 等用于模块加载的方法。
+其中 jsonpScriptSrc，函数中存在 chunkid 与 chunkname 的映射，用于根据 chunkid 得到 chunks 的加载路径。因为这个映射会受 chunk 增加或减少的影响，经常变化，不单独打包会生成到每个非异步加载的 chunk 里，使得本来没变的 chunk 也不能缓存了。所以一般会单独打包或内嵌到 html 里。
+
+#### 异步加载打包模块
+
+正常情况下，通过异步引用的模块会打包成一个 chunk。如果引用路径是动态的，比如:
+
+```javascript
+ret.component = () => import('@/views' + ret.path + '.vue');
+```
+
+会把 views 文件下，所有**没有被引用的**组件(被引用的是子组件)，单独打包成 chunk。
 
 ### 参考资料
 
 [手摸手，带你用合理的姿势使用 webpack4](https://juejin.im/post/5b5d6d6f6fb9a04fea58aabc#heading-7)
 [Webpack——解决疑惑,让你明白](https://www.jianshu.com/p/dcb28b582318)
+
+[没有了 CommonsChunkPlugin，咱拿什么来分包（译）](https://segmentfault.com/a/1190000013476837)

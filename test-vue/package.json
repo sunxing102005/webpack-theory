@@ -10,9 +10,13 @@
         "build": "cross-env NODE_ENV=production  webpack --env=prod --progress  --config build/webpack.conf.prod.js"
     },
     "dependencies": {
-        "vue": "^2.6.10"
+        "vue": "^2.6.10",
+        "vue-router": "^3.0.2"
     },
     "devDependencies": {
+        "@babel/core": "^7.5.5",
+        "@babel/plugin-syntax-dynamic-import": "^7.2.0",
+        "@babel/preset-env": "^7.4.2",
         "babel-core": "^7.0.0-bridge.0",
         "babel-eslint": "^10.0.1",
         "babel-jest": "^24.5.0",
