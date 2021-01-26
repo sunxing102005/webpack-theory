@@ -45,7 +45,8 @@ import {
   tabBarComponentName,
   tabBarConfigName,
   tabBarContainerComponentName,
-  tabBarPanelComponentName
+  tabBarPanelComponentName,
+  DEFAULT_ENTRY,
 } from './constants'
 import {
   addLeadingSlash,
@@ -57,7 +58,9 @@ import {
   resetTSClassProperty,
   stripTrailingSlash
 } from './helper'
-
+//@ts-ignore
+const { exec } = require('child_process');
+const chalk = require('chalk')
 const defaultH5Config: Partial<IH5Config> = {
   router: {
     mode: 'hash',
@@ -105,7 +108,7 @@ class Compiler {
     this.routerConfig = get(projectConfig, 'h5.router', {})
     this.sourcePath = path.join(appPath, sourceDir)
     this.outputPath = path.join(appPath, outputDir)
-    this.tempDir = CONFIG.TEMP_DIR
+    this.tempDir = CONFIG.BK_DIR
     this.tempPath = path.join(appPath, this.tempDir)
     this.entryFilePath = resolveScriptPath(path.join(this.sourcePath, entryFile || CONFIG.ENTRY))
     this.entryFileName = path.basename(this.entryFilePath)
@@ -201,6 +204,11 @@ class Compiler {
       }))
     }
     readFiles.call(this, sourcePath, sourcePath)
+    const pkgJsonPath = path.resolve(appPath, 'package.json');
+    const original = fs.readFileSync(pkgJsonPath, { encoding: 'utf8' })
+    this.generatePkgJson(original, pkgJsonPath);
+    // hack
+    fs.writeFileSync(path.join(this.tempPath, `.env`), 'SKIP_PREFLIGHT_CHECK=true');
     return Promise.all(readPromises)
   }
 
@@ -278,18 +286,19 @@ class Compiler {
       persistent: true,
       ignoreInitial: true
     })
+    console.log(chalk.gray('\n监听文件修改中...\n'))
     watcher
       .on('add', filePath => {
         const relativePath = path.relative(appPath, filePath)
         printLog(processTypeEnum.CREATE, '添加文件', relativePath)
         this.processFiles(filePath, filePath)
-        this.processFlagFile()
+        // this.processFlagFile()
       })
       .on('change', filePath => {
         const relativePath = path.relative(appPath, filePath)
         printLog(processTypeEnum.MODIFY, '文件变动', relativePath)
         this.processFiles(filePath, filePath)
-        this.processFlagFile()
+        // this.processFlagFile()
       })
       .on('unlink', filePath => {
         const relativePath = path.relative(appPath, filePath)
@@ -299,7 +308,7 @@ class Compiler {
         const dist = this.getDist(distDirname, filePath, isScriptFile)
         printLog(processTypeEnum.UNLINK, '删除文件', relativePath)
         fs.unlinkSync(dist)
-        this.processFlagFile()
+        // this.processFlagFile()
       })
   }
 
@@ -1016,6 +1025,7 @@ class Compiler {
           if (left.object.name === componentClassName
             && t.isIdentifier(left.property)
             && left.property.name === 'config') {
+              console.log('AssignmentExpression')
             configObj = traverseObjectNode(node.right)
             astPath.remove()
           }
@@ -1109,6 +1119,7 @@ class Compiler {
     let exportNamedDeclarationPath: NodePath<t.ExportNamedDeclaration>
     let componentClassName
     let needSetConfigFromHooks
+    //@ts-ignore
     let configFromHooks
     let moduleNames;
     let configObj = {};
@@ -1146,6 +1157,12 @@ class Compiler {
             } else {
               componentClassName = node.id.name
             }
+             // 继承的Ditto.Component 替换 React.Component
+             if(t.isMemberExpression(node.superClass)){
+              if(t.isIdentifier(node.superClass.object) && node.superClass.object.name === 'Ditto'){
+                node.superClass.object.name = 'React'
+              }
+            }
           } else {
             if (node.id === null) {
               const parentNode = astPath.parentPath.node as any
@@ -1165,32 +1182,32 @@ class Compiler {
             } else {
               componentClassName = node.id.name
             }
-
             // constructor中config提取
-            astPath.traverse({
-              ClassMethod(astPath) {
-                const node = astPath.node
-                if (node.kind === 'constructor') {
-                  astPath.traverse({
-                    ExpressionStatement(astPath) {
-                      const node = astPath.node
-                      if (node.expression &&
-                        node.expression.type === 'AssignmentExpression' &&
-                        node.expression.operator === '=') {
-                        const left = node.expression.left
-                        if (left.type === 'MemberExpression' &&
-                          left.object.type === 'ThisExpression' &&
-                          left.property.type === 'Identifier' &&
-                          left.property.name === 'config') {
-                          configObj = traverseObjectNode(node.expression.right)
-                          astPath.remove()
-                        }
-                      }
-                    }
-                  })
-                }
-              }
-            })
+            // astPath.traverse({
+            //   ClassMethod(astPath) {
+            //     const node = astPath.node
+            //     if (node.kind === 'constructor') {
+            //       astPath.traverse({
+            //         ExpressionStatement(astPath) {
+            //           const node = astPath.node
+            //           if (node.expression &&
+            //             node.expression.type === 'AssignmentExpression' &&
+            //             node.expression.operator === '=') {
+            //             const left = node.expression.left
+            //             if (left.type === 'MemberExpression' &&
+            //               left.object.type === 'ThisExpression' &&
+            //               left.property.type === 'Identifier' &&
+            //               left.property.name === 'config') {
+            //                 console.log('traverse', node.expression.right)
+            //               configObj = traverseObjectNode(node.expression.right)
+            //               astPath.remove()
+            //             }
+            //           }
+            //         }
+            //       })
+            //     }
+            //   }
+            // })
           }
         }
       }
@@ -1385,7 +1402,33 @@ class Compiler {
           }
         }
       },
+      ClassProperty: {
+        enter(astPath: NodePath<t.ClassProperty>) {
+          const node = astPath.node
+          const key = toVar(node.key)
+          if (key === 'config') {
+            pageConfig = toVar(node.value)
+            configObj = traverseObjectNode(node)
+            console.log('ClassProperty', configObj);
+            astPath.remove();
+          }
+        }
+      },
       CallExpression: {
+        enter(astPath: NodePath<t.CallExpression>) {
+          const node = astPath.node
+          const callee = node.callee
+          if (t.isMemberExpression(callee)) {
+            const objName = toVar(callee.object)
+            const object = callee.object as t.Identifier;
+            if(objName === 'Ditto'){
+              // ditto api转为bk api
+              dittoapiMap.set(toVar(callee.property), toVar(callee.property));
+              console.log('ssset', toVar(object))
+              object.name = 'bk'
+            }
+          }
+        },
         exit(astPath: NodePath<t.CallExpression>) {
           const node = astPath.node
           const callee = node.callee
@@ -1403,15 +1446,9 @@ class Compiler {
           } else if (t.isMemberExpression(callee)) {
             const objName = toVar(callee.object)
             const tmpFuncName = toVar(callee.property)
-            const object = callee.object as t.Identifier;
-            console.log('isMemberExpression', objName, tmpFuncName)
             if (objName === dittoImportDefaultName && APIS_NEED_TO_APPEND_THIS.has(tmpFuncName)) {
               needToAppendThis = true
               funcName = tmpFuncName
-            }
-            if(objName === 'Ditto'){
-              // ditto api转为bk api
-              object.name = 'bk'
             }
           } else if (t.isIdentifier(callee)) {
             const tmpFuncName = toVar(callee)
@@ -1447,6 +1484,16 @@ class Compiler {
       },
       Program: {
         exit(astPath: NodePath<t.Program>) {
+          console.log('bbbbk', dittoapiMap, Object.keys(dittoapiMap).length)
+          if(dittoapiMap && dittoapiMap.size){
+            // 插入bk引用
+            const lastImportIndex = findLastIndex(astPath.node.body, t.isImportDeclaration)
+            const lastImportNode = astPath.get(`body.${lastImportIndex > -1 ? lastImportIndex : 0}`) as NodePath<t.ImportDeclaration>
+            const extraNodes: (t.Node | false)[] = [
+            toAst(`import { bk } from '@ke/jaye'`),
+            ]
+            lastImportNode.insertAfter(compact(extraNodes))
+          }
           // const node = astPath.node
           if (hasJSX) {
             // if (!importNervNode) {
@@ -1473,13 +1520,13 @@ class Compiler {
             astPath.traverse({
               ClassBody(astPath) {
                 if (needSetConfigFromHooks) {
-                  const classPath = astPath.findParent((p: NodePath<t.Node>) => p.isClassExpression() || p.isClassDeclaration()) as NodePath<t.ClassDeclaration>
-                  classPath.node.body.body.unshift(
-                    t.classProperty(
-                      t.identifier('config'),
-                      configFromHooks as t.ObjectExpression
-                    )
-                  )
+                  // const classPath = astPath.findParent((p: NodePath<t.Node>) => p.isClassExpression() || p.isClassDeclaration()) as NodePath<t.ClassDeclaration>
+                  // classPath.node.body.body.unshift(
+                  //   t.classProperty(
+                  //     t.identifier('config'),
+                  //     configFromHooks as t.ObjectExpression
+                  //   )
+                  // )
                 }
               }
             })
@@ -1489,17 +1536,6 @@ class Compiler {
     }
 
     const pageVisitor: TraverseOptions = {
-      ClassProperty: {
-        enter(astPath: NodePath<t.ClassProperty>) {
-          const node = astPath.node
-          const key = toVar(node.key)
-          if (key === 'config') {
-            pageConfig = toVar(node.value)
-            configObj = traverseObjectNode(node)
-            astPath.remove();
-          }
-        }
-      },
       ClassMethod: {
         exit(astPath: NodePath<t.ClassMethod>) {
           const node = astPath.node
@@ -1756,7 +1792,6 @@ class Compiler {
   }
   filterSubPackages(subPackages) {
     let subPackagesList: any[] = []
-    console.log('accccc', this.subPackages)
     if (this.subPackages) {
       if (this.subPackages === 'inquirer') {
         // subPackagesList = await inquirer.prompt([
@@ -1769,12 +1804,41 @@ class Compiler {
         // ]).subPackagesList
       } else {
         subPackagesList = this.subPackages.split(',').map(root => 'subpackages/' + root)
-        console.log('acccccddd', subPackagesList);
       }
       // compiler.subPackagesList = subPackagesList
       subPackages = subPackages.filter(subPackage => subPackagesList.includes(subPackage.root))
     }
     return subPackages
+  }
+  generatePkgJson(code, filePath){
+    const sourcePath = this.sourcePath
+    const distDirname = this.getTempDir(filePath, sourcePath)
+    // const distPath = this.getDist(distDirname, filePath, false)
+    console.log('generatePkgJson', sourcePath, distDirname)
+    const pkgConfig = JSON.parse(code);
+    const dependencies = {};
+    const devDependencies = {};
+    Object.keys(pkgConfig.dependencies).forEach(item=>{
+      if(!/^@ke\/ditto/g.test(item)){
+        dependencies[item] = pkgConfig.dependencies[item]
+      }
+    })
+    Object.keys(pkgConfig.devDependencies).forEach(item=>{
+      if(!/^@ke\/ditto/g.test(item)){
+        devDependencies[item] = pkgConfig.devDependencies[item]
+      }
+    })
+    dependencies['@ke/jaye'] = "^0.0.51";
+    dependencies['@ke/jaye-scripts'] = "0.0.36";
+    pkgConfig.dependencies = dependencies;
+    pkgConfig.devDependencies = devDependencies;
+    pkgConfig.scripts = {
+      "start": "jaye-scripts start",
+      "build": "jaye-scripts build"
+    }
+    pkgConfig.projectType = 'beikeMiniProgram'
+    delete pkgConfig.templateInfo
+    fs.writeFileSync(path.join(distDirname, `package.json`), JSON.stringify(pkgConfig));
   }
   async processFiles(filePath, originalFilePath) {
     const original = fs.readFileSync(filePath, { encoding: 'utf8' })
@@ -1792,7 +1856,7 @@ class Compiler {
           this.pages = [];
           // @ts-ignore
           const {code, config: configObj, subpackagesRouter} = await this.processEntry(original, filePath);
-          fs.writeFileSync(path.join(distDirname, `app.js`), code);
+          fs.writeFileSync(path.join(distDirname, `app.js`), DEFAULT_ENTRY);
 
           console.log('sbbbb', configObj.subPackages, subpackagesRouter)
           let subPackages = this.filterSubPackages(this.mergeSubPackages(configObj.subPackages, subpackagesRouter));
@@ -1856,11 +1920,29 @@ export async function build(appPath: string, buildConfig: IBuildOptions) {
   process.env.DITTO_ENV = BUILD_TYPES.H5
   // await checkCliAndFrameworkVersion(appPath, BUILD_TYPES.H5)
   const compiler = new Compiler(appPath)
-  console.log('gggg', buildConfig)
   compiler.currentTrack = buildConfig.currentTrack
   compiler.subPackages = buildConfig.subPackages
   await compiler.clean()
   await compiler.buildTemp()
+  console.log('process.cwd()', process.cwd(), this.tempDir);
+  printLog(processTypeEnum.GENERATE, 'node modules 安装中...')
+  const child = exec('npm install', { cwd: path.join(process.cwd(), CONFIG.BK_DIR) },(err)=>{
+    if(err) {
+      console.log('etr', err);
+      return;
+    }
+    printLog(processTypeEnum.REMIND, 'node modules 安装完成 ✅')
+    if (buildConfig.watch) {
+      compiler.watchFiles()
+    }
+  });
+  child.stdout.on('data', function (data) {
+    console.log(data)
+  })
+  child.stderr.on('data', function (data) {
+    console.log(data)
+  })
+
   // await compiler.currentTrack.sendTrack()
   // if (compiler.h5Config.transformOnly !== true) {
   //   await compiler.buildDist(buildConfig)
