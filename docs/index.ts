@@ -10,7 +10,7 @@ import * as fs from 'fs-extra'
 import * as klaw from 'klaw'
 //@ts-ignore
 import { compact, findLastIndex, first, fromPairs, get, identity, merge, transform, uniqBy, kebabCase,uniq  } from 'lodash'
-import { partial, pipe } from 'lodash/fp'
+import { pipe } from 'lodash/fp'
 import * as path from 'path'
 // import * as resolve from 'resolve'
 import {traverseObjectNode} from '../util'
@@ -28,7 +28,6 @@ import {
 } from '../util'
 import {
   convertAstExpressionToVariable as toVar,
-  convertObjectToAstExpression as objToAst,
   convertSourceStringToAstExpression as toAst
 } from '../util/astConvert'
 import { BUILD_TYPES, processTypeEnum, PROJECT_CONFIG, REG_SCRIPTS, REG_TYPESCRIPT, DEFAULT_Component_SET } from '../util/constants'
@@ -42,21 +41,15 @@ import {
   nervJsImportDefaultName,
   providerComponentName,
   setStoreFuncName,
-  tabBarComponentName,
-  tabBarConfigName,
-  tabBarContainerComponentName,
-  tabBarPanelComponentName,
   DEFAULT_ENTRY,
 } from './constants'
 import {
   addLeadingSlash,
-  createRoute,
   isDittoClass,
   isUnderSubPackages,
   pRimraf,
   removeLeadingSlash,
   resetTSClassProperty,
-  stripTrailingSlash
 } from './helper'
 //@ts-ignore
 const { exec } = require('child_process');
@@ -322,18 +315,8 @@ class Compiler {
     // const pxTransformConfig = this.pxTransformConfig
     const routerMode = this.routerConfig.mode
     const isMultiRouterMode = routerMode === 'multi'
-    const routerLazyload = 'lazyload' in this.routerConfig
-      ? this.routerConfig.lazyload
-      : !isMultiRouterMode
-    const customRoutes: Record<string, string> = isMultiRouterMode
-      ? {}
-      : get(this.h5Config, 'router.customRoutes', {})
-    const routerBasename = isMultiRouterMode
-      ? get(this.h5Config, 'publicPath', '/')
-      : addLeadingSlash(stripTrailingSlash(get(this.h5Config, 'router.basename')))
 
     const renamePagename = get(this.h5Config, 'router.renamePagename', identity)
-    const isUi = this.isUi
     const subPackages = this.subPackages;
 
     let ast = wxTransformer({
@@ -343,15 +326,10 @@ class Compiler {
       isTyped: REG_TYPESCRIPT.test(filePath),
       adapter: 'h5'
     }).ast
-    let dittoImportDefaultName: string
     let providerImportName: string
     let storeName: string
-    let renderCallCode: string
 
-    let tabBar
-    let tabbarPos
     let hasConstructor = false
-    let hasComponentWillMount = false
     let hasComponentDidMount = false
     let hasComponentDidShow = false
     let hasComponentDidHide = false
@@ -361,11 +339,9 @@ class Compiler {
     let configObj = {};
     let componentClassName: string = ''
     // let stateNode: t.ClassProperty
-    console.log('xx', hasComponentWillMount, hasComponentDidMount, hasComponentWillUnmount, )
     const additionalConstructorNode = toAst(`Ditto._$app = this`)
     const callComponentDidShowNode = toAst(`this.componentDidShow()`)
     const callComponentDidHideNode = toAst(`this.componentDidHide()`)
-    const initTabbarApiNode = toAst(`Ditto.initTabBarApis(this, Ditto)`)
 
     ast = babel.transformFromAst(ast, '', {
       plugins: [
@@ -420,27 +396,6 @@ class Compiler {
       }
     }
 
-    const wrapWithTabbar = (currentPagename: string, funcBody: string) => {
-      const firstPage = first(pages)
-      const homePage = firstPage ? firstPage[0] : ''
-
-      const panel = `
-        <${tabBarPanelComponentName}>
-          ${funcBody}
-        </${tabBarPanelComponentName}>`
-
-      const comp = `
-        <${tabBarComponentName}
-          conf={this.state.${tabBarConfigName}}
-          homePage="${homePage}"
-          ${currentPagename ? `currentPagename={'${currentPagename}'}` : ''}
-          ${tabbarPos === 'top' ? `tabbarPos={'top'}` : ''} />`
-
-      return `
-        <${tabBarContainerComponentName}>
-          ${tabbarPos === 'top' ? `${comp}${panel}` : `${panel}${comp}`}
-        </${tabBarContainerComponentName}>`
-    }
 
     const wrapWithProvider = (funcBody: string) => {
       return `
@@ -476,15 +431,10 @@ class Compiler {
     const getSubPackagesRouter = async () => {
       const fileList = await getSubPackagesRouterFile() as string[];
       const subpackages: {root: string, pages: string[]}[] = []
-      // const subPackagesRouterArray: any = [];
       const currentEnv = process.env.DITTO_ENV
       fileList.forEach(path => {
-        // const temp = path.match(/subpackages\/(\S+)\/router/)
-        // const packageName = temp && temp[1]
         const router: any = require(path)
-        // const customRoutes: any = {}
         let routerPaths: any = []
-        // const rootPath = router.rootPath 
         if (router && Array.isArray(router.pages)) {
           router.pages.forEach((item: any) => {
             let path = ''
@@ -499,7 +449,6 @@ class Compiler {
             path && routerPaths.push(path) 
           })
         }
-        // subPackagesRouterArray.push({packageName, router, customRoutes})
         const code = `export default { pages: ${JSON.stringify(routerPaths)} }`
         const transformResult = wxTransformer({
           code,
@@ -549,37 +498,13 @@ class Compiler {
           const keyName = toVar(key)
 
           const isRender = keyName === 'render'
-          const isComponentWillMount = keyName === 'componentWillMount'
           const isComponentDidMount = keyName === 'componentDidMount'
           const isComponentWillUnmount = keyName === 'componentWillUnmount'
           const isConstructor = keyName === 'constructor'
 
           if (isRender) {
-            const createFuncBody = (pages: [PageName, FilePath, any][]) => {
-              allRoutes = pages.map(([pageName, filePath, oriPath], k) => {
-                const shouldLazyloadPage = typeof routerLazyload === 'function'
-                  ? routerLazyload(pageName)
-                  : routerLazyload
-                return createRoute({
-                  pageName,
-                  oriPath,
-                  lazyload: shouldLazyloadPage,
-                  isIndex: k === 0
-                })
-              })
-              return `
-                <Router
-                  mode={${JSON.stringify(routerMode)}}
-                  history={_dittoHistory}
-                  routes={_dittoRoutes}
-                  customRoutes={_customRoutes} />
-                `
-            }
-
             const buildFuncBody = pipe(
               ...compact([
-                createFuncBody,
-                tabBar && partial(wrapWithTabbar, ['']),
                 providerComponentName && storeName && wrapWithProvider,
                 wrapWithFuncBody
               ])
@@ -590,7 +515,6 @@ class Compiler {
             node.body.body = compact([
               hasComponentDidHide && isComponentWillUnmount && callComponentDidHideNode,
               ...node.body.body,
-              tabBar && isComponentWillMount && initTabbarApiNode,
               hasConstructor && isConstructor && additionalConstructorNode,
               hasComponentDidShow && isComponentDidMount && callComponentDidShowNode
             ])
@@ -614,26 +538,6 @@ class Compiler {
             node.body.push(t.classMethod(
               'method', t.identifier('constructor'), [t.identifier('props'), t.identifier('context')],
               t.blockStatement([toAst('super(props, context)'), additionalConstructorNode] as t.Statement[]), false, false))
-          }
-          if (tabBar) {
-            if (!hasComponentWillMount) {
-              node.body.push(t.classMethod(
-                'method', t.identifier('componentWillMount'), [],
-                t.blockStatement([initTabbarApiNode]), false, false))
-            }
-            // if (!stateNode) {
-            //   stateNode = t.classProperty(
-            //     t.identifier('state'),
-            //     t.objectExpression([])
-            //   )
-            //   node.body.unshift(stateNode)
-            // }
-            // if (t.isObjectExpression(stateNode.value)) {
-            //   stateNode.value.properties.push(t.objectProperty(
-            //     t.identifier(tabBarConfigName),
-            //     tabBar
-            //   ))
-            // }
           }
         }
       }
@@ -677,83 +581,6 @@ class Compiler {
           })
         }
       }
-    }
-
-    /**
-     * 设置TabBar路由
-     * @param astPath tabBar的astPath
-     * @param value tabBar的value
-     */
-    // @ts-ignore
-    const setTabBar = (value) => {
-      // tabBar相关处理
-      tabBar = value
-      value.properties.forEach((node) => {
-        if (t.isSpreadProperty(node)) return
-        switch (toVar(node.key)) {
-          case 'position':
-            tabbarPos = toVar(node.value)
-            break
-          case 'list':
-            t.isArrayExpression(node.value) && node.value.elements.forEach(v => {
-              if (!t.isObjectExpression(v)) return
-              v.properties.forEach(property => {
-                if (!t.isObjectProperty(property)) return
-                switch (toVar(property.key)) {
-                  case 'iconPath':
-                  case 'selectedIconPath':
-                    if (t.isStringLiteral(property.value)) {
-                      property.value = t.callExpression(
-                        t.identifier('require'),
-                        [t.stringLiteral(`./${property.value.value}`)]
-                      )
-                    }
-                    break
-                  case 'pagePath':
-                    property.value = t.stringLiteral(addLeadingSlash(toVar(property.value)))
-                    break
-                }
-              })
-            })
-        }
-      })
-      value.properties.push(t.objectProperty(
-        t.identifier('mode'),
-        t.stringLiteral(routerMode)
-      ))
-      value.properties.push(t.objectProperty(
-        t.identifier('basename'),
-        t.stringLiteral(routerBasename)
-      ))
-      value.properties.push(t.objectProperty(
-        t.identifier('customRoutes'),
-        t.objectExpression(objToAst(customRoutes))
-      ))
-    }
-
-    /**
-     * 过滤subPackages
-     * @param subPackages 子包白名单
-     * @param value subPackages的value
-     */
-    // @ts-ignore
-    const filterSubPackagesRouter = (subPackages: string, value) => {
-      const subPackagesList = subPackages.split(',')
-      const elements = value.elements.filter((ele: t.ObjectExpression) => {
-        if (!t.isObjectExpression(ele)) return false;
-        let root = '';
-        ele.properties.filter(node => t.isObjectProperty(node)).forEach((node: t.ObjectProperty) => {
-          switch (t.isIdentifier(node.key) && node.key.name) {
-            case 'root':
-              t.isStringLiteral(node.value) && (root = node.value.value);
-              break;
-            default:
-              break;
-          }
-        })
-        return subPackagesList.some((item: string) => root === 'subpackages/' + item)
-      })
-      value.elements = elements;
     }
 
     /**
@@ -805,26 +632,9 @@ class Compiler {
       return subPackages
     }
 
-    /**
-     * 合并app.tsx中的subPackages和子包中router
-     * @param node config节点
-     */
-    // const mergeSubPackagesRouter = (node) => {
-      // if (!subPackagesRouter.elements.length) return
-      // const sNode = t.isObjectExpression(node.value) && node.value.properties.find((node: t.ObjectProperty) => t.isIdentifier(node.key) && node.key.name === 'subPackages')
-      // if (!sNode) {
-      //   node.value.properties.push(t.objectProperty(t.stringLiteral('subPackages'), subPackagesRouter))
-      //   return
-      // }
-      // if (!t.isSpreadProperty(sNode) && t.isArrayExpression(sNode.value)) {
-      //   sNode.value = mergeSubPackagesArrayExpression(sNode.value, subPackagesRouter)
-      // } else {
-      //   sNode.value = subPackagesRouter;
-      // }
     // }
     /**
      * ClassProperty使用的visitor
-     * 负责收集config中的pages，收集tabbar的position，替换icon。
      */
     const classPropertyVisitor = {
       ObjectProperty(astPath: NodePath<t.ObjectProperty>) {
@@ -835,22 +645,10 @@ class Compiler {
         if (keyName === 'pages' && t.isArrayExpression(value)) {
           setPageRouter(astPath, value)
         } 
-        // else if (keyName === 'tabBar' && t.isObjectExpression(value)) {
-        //   setTabBar(value)
-        // } else if (subPackages && keyName === 'subPackages' && t.isArrayExpression(value)) {
-        //   filterSubPackagesRouter(subPackages, value)
-        // }
       }
     }
      
     let subPackages2 = await getSubPackagesRouter()
-    // const subPackagesRouter: t.ArrayExpression = subPackagesRouterAst
-    // let subCustomRoutes = {}
-    // subPackagesRouterArray.forEach(router => {
-    //   subCustomRoutes = { ...subCustomRoutes, ...router.customRoutes }
-    // })
-    // Object.assign(customRoutes, subCustomRoutes)
-
     traverse(ast, {
       ClassExpression: ClassDeclarationOrExpression,
       ClassDeclaration: ClassDeclarationOrExpression,
@@ -867,11 +665,6 @@ class Compiler {
             // mergeSubPackagesRouter(node)
             astPath.traverse(classPropertyVisitor)
             astPath.remove();
-            // if (isMultiRouterMode) {
-            //   merge(customRoutes, transform(pages, (res, [pageName, filePath], key) => {
-            //     res[addLeadingSlash(pageName)] = addLeadingSlash(filePath)
-            //   }, {}))
-            // }
           }
         }
       },
@@ -883,9 +676,8 @@ class Compiler {
 
           if (source.value === '@ke/ditto') {
             const specifier = specifiers.find(item => t.isImportDefaultSpecifier(item))
-            console.log('specifier', node);
             if (specifier) {
-              dittoImportDefaultName = toVar(specifier.local)
+              // dittoImportDefaultName = toVar(specifier.local)
               specifier.local.name = 'React'
             }
             source.value = 'react'
@@ -965,15 +757,6 @@ class Compiler {
               // Ditto.render转译
               object.name = 'React'
             }
-            if (object.name === dittoImportDefaultName && property.name === 'render') {
-              // object.name = nervJsImportDefaultName
-              // property.name = 'hydrate'
-              // renderCallCode = `Loadable.preloadReady().then(() => {
-              //   ${generate(astPath.node).code}
-              // })`
-              // // renderCallCode = generate(astPath.node).code
-              // astPath.remove()
-            }
           } else {
             if (calleeName === setStoreFuncName) {
               if (parentPath.isAssignmentExpression() ||
@@ -992,9 +775,7 @@ class Compiler {
           const keyName = toVar(key)
           if (keyName === 'constructor') {
             hasConstructor = true
-          } else if (keyName === 'componentWillMount') {
-            hasComponentWillMount = true
-          } else if (keyName === 'componentDidMount') {
+          }else if (keyName === 'componentDidMount') {
             hasComponentDidMount = true
           } else if (keyName === 'componentDidShow') {
             hasComponentDidShow = true
@@ -1025,7 +806,6 @@ class Compiler {
           if (left.object.name === componentClassName
             && t.isIdentifier(left.property)
             && left.property.name === 'config') {
-              console.log('AssignmentExpression')
             configObj = traverseObjectNode(node.right)
             astPath.remove()
           }
@@ -1033,46 +813,7 @@ class Compiler {
       },
       Program: {
         exit(astPath: NodePath<t.Program>) {
-          const node = astPath.node
-          // const lastImportIndex = findLastIndex(astPath.node.body, t.isImportDeclaration)
-          // const lastImportNode = astPath.get(`body.${lastImportIndex > -1 ? lastImportIndex : 0}`) as NodePath<t.ImportDeclaration>
-          // const firstPage = first(pages)
-          // const routerConfigs = JSON.stringify({
-          //   basename: routerBasename,
-          //   customRoutes
-          // })
-
           astPath.traverse(programExitVisitor)
-          // const extraNodes: (t.Node | false)[] = [
-          //   !hasNerv && toAst(`import ${nervJsImportDefaultName} from 'nervjs'`),
-            // tabBar && toAst(`import { View, ${tabBarComponentName}, ${tabBarContainerComponentName}, ${tabBarPanelComponentName}} from '@ke/ditto-components'`),
-            // toAst(`import { Router, createHistory, mountApis } from '@ke/ditto-router'`),
-            // toAst(`import { AsyncLoad, Loadable } from '@ke/ditto-router/loadable'`),
-            // toAst(`import { setRoutes } from '@ke/ditto-react-ssr/routeConfig'`),
-            // toAst(`import { getRoutes as _getRoutes } from './_routes'`),
-            // toAst(`const _dittoRoutes = _getRoutes(false)`),
-            // toAst(`Ditto.initPxTransform(${JSON.stringify(pxTransformConfig)})`),
-            // toAst(`
-            //   const _customRoutes = ${JSON.stringify(customRoutes)}`),
-            // toAst(`
-            //   const _dittoHistory = createHistory({
-            //     mode: "${routerMode}",
-            //     basename: "${routerBasename}",
-            //     customRoutes: _customRoutes,
-            //     firstPagePath: "${addLeadingSlash(firstPage ? firstPage[0] : '')}"
-            //   });
-            // `),
-            // toAst(`setRoutes(_dittoRoutes, _customRoutes)`),
-            // isMultiRouterMode ? toAst(`mountApis(${routerConfigs});`) : toAst(`mountApis(${routerConfigs}, _dittoHistory);`)
-          // ]
-
-          if (!isUi) {
-            // lastImportNode.insertAfter(compact(extraNodes))
-          }
-          if (renderCallCode) {
-            const renderCallNode = toAst(renderCallCode)
-            node.body.push(renderCallNode)
-          }
         }
       }
     })
@@ -1101,7 +842,6 @@ class Compiler {
       adapter: 'h5'
     }).ast
     let dittoImportDefaultName
-    let hasJSX = false
     let hasOnPageScroll = false
     let hasOnReachBottom = false
     let hasOnPullDownRefresh = false
@@ -1118,7 +858,6 @@ class Compiler {
     let exportDefaultDeclarationNode: t.ExportDefaultDeclaration
     let exportNamedDeclarationPath: NodePath<t.ExportNamedDeclaration>
     let componentClassName
-    let needSetConfigFromHooks
     //@ts-ignore
     let configFromHooks
     let moduleNames;
@@ -1339,11 +1078,6 @@ class Compiler {
           }
         }
       },
-      JSXElement: {
-        exit(astPath: NodePath<t.JSXElement>) {
-          hasJSX = true
-        }
-      },
       JSXOpeningElement: {
         exit(astPath: NodePath<t.JSXOpeningElement>) {
           const node = astPath.node
@@ -1360,7 +1094,6 @@ class Compiler {
           }
           if(componentName){
             const kebabName = kebabCase(tagName);
-            console.log('tagName', tagName, kebabName);
             node.name = t.jSXIdentifier(kebabCase(kebabName));
 
           }
@@ -1424,7 +1157,6 @@ class Compiler {
             if(objName === 'Ditto'){
               // ditto api转为bk api
               dittoapiMap.set(toVar(callee.property), toVar(callee.property));
-              console.log('ssset', toVar(object))
               object.name = 'bk'
             }
           }
@@ -1474,7 +1206,6 @@ class Compiler {
           if (left.object.name === componentClassName
             && t.isIdentifier(left.property)
             && left.property.name === 'config') {
-            needSetConfigFromHooks = true
             configFromHooks = node.right
             pageConfig = toVar(node.right)
             configObj = traverseObjectNode(node.right);
@@ -1484,7 +1215,6 @@ class Compiler {
       },
       Program: {
         exit(astPath: NodePath<t.Program>) {
-          console.log('bbbbk', dittoapiMap, Object.keys(dittoapiMap).length)
           if(dittoapiMap && dittoapiMap.size){
             // 插入bk引用
             const lastImportIndex = findLastIndex(astPath.node.body, t.isImportDeclaration)
@@ -1493,43 +1223,6 @@ class Compiler {
             toAst(`import { bk } from '@ke/jaye'`),
             ]
             lastImportNode.insertAfter(compact(extraNodes))
-          }
-          // const node = astPath.node
-          if (hasJSX) {
-            // if (!importNervNode) {
-            //   importNervNode = t.importDeclaration(
-            //     [t.importDefaultSpecifier(t.identifier(nervJsImportDefaultName))],
-            //     t.stringLiteral('nervjs')
-            //   )
-            //   const specifiers = importNervNode.specifiers
-            //   const defaultSpecifier = specifiers.find(item => t.isImportDefaultSpecifier(item))
-            //   if (!defaultSpecifier) {
-            //     specifiers.unshift(
-            //       t.importDefaultSpecifier(t.identifier(nervJsImportDefaultName))
-            //     )
-            //   }
-            //   node.body.unshift(importNervNode)
-            // }
-            // if (!importDittoNode) {
-            //   importDittoNode = t.importDeclaration(
-            //     [t.importDefaultSpecifier(t.identifier('Ditto'))],
-            //     t.stringLiteral('@ke/ditto-h5')
-            //   )
-            //   node.body.unshift(importDittoNode)
-            // }
-            astPath.traverse({
-              ClassBody(astPath) {
-                if (needSetConfigFromHooks) {
-                  // const classPath = astPath.findParent((p: NodePath<t.Node>) => p.isClassExpression() || p.isClassDeclaration()) as NodePath<t.ClassDeclaration>
-                  // classPath.node.body.body.unshift(
-                  //   t.classProperty(
-                  //     t.identifier('config'),
-                  //     configFromHooks as t.ObjectExpression
-                  //   )
-                  // )
-                }
-              }
-            })
           }
         }
       }
@@ -1567,17 +1260,6 @@ class Compiler {
               }
             })
           }
-          // 如果h5: 增加骨架屏逻辑
-          // if (keyName === 'render') {
-          //   const addCode = `
-          //   if (super.getH5FrameComponent){
-          //     const Frame = super.getH5FrameComponent(this.loading)
-          //     if (this.props[this.constructor._diorName] && !this.props[this.constructor._diorName].__asyncComplete__ && Frame) {
-          //       return <Frame />
-          //     }
-          //   }`
-          //   node.body.body.unshift(toAst(addCode))
-          // }
         }
       },
       ClassBody: {
@@ -1805,7 +1487,6 @@ class Compiler {
       } else {
         subPackagesList = this.subPackages.split(',').map(root => 'subpackages/' + root)
       }
-      // compiler.subPackagesList = subPackagesList
       subPackages = subPackages.filter(subPackage => subPackagesList.includes(subPackage.root))
     }
     return subPackages
@@ -1813,8 +1494,6 @@ class Compiler {
   generatePkgJson(code, filePath){
     const sourcePath = this.sourcePath
     const distDirname = this.getTempDir(filePath, sourcePath)
-    // const distPath = this.getDist(distDirname, filePath, false)
-    console.log('generatePkgJson', sourcePath, distDirname)
     const pkgConfig = JSON.parse(code);
     const dependencies = {};
     const devDependencies = {};
@@ -1858,28 +1537,12 @@ class Compiler {
           const {code, config: configObj, subpackagesRouter} = await this.processEntry(original, filePath);
           fs.writeFileSync(path.join(distDirname, `app.js`), DEFAULT_ENTRY);
 
-          console.log('sbbbb', configObj.subPackages, subpackagesRouter)
           let subPackages = this.filterSubPackages(this.mergeSubPackages(configObj.subPackages, subpackagesRouter));
           console.log('subPackages', subPackages)
           configObj.subPackages = subPackages;
-          console.log('kooooo', distPath, distDirname,extname)
           const jsonPath = distPath.replace(`.js`, '.json');
           const jsonStr = JSON.stringify(configObj);
           fs.writeFileSync(jsonPath, jsonStr);
-
-          // if (Array.isArray(result)) {
-          //   result.forEach(([pageName, code]) => {
-          //     fs.writeFileSync(
-          //       path.join(distDirname, `${pageName}.js`),
-          //       code
-          //     )
-          //   })
-          // } else if(typeof result === 'object'){
-          //   fs.writeFileSync(distPath, result.app)
-          //   // 分离路由文件
-          //   const routesPath = distPath.replace('/app.js', '/_routes.js')
-          //   fs.writeFileSync(routesPath, result.routes)
-          // }
         } else {
           const {code, config: configObj} = this.processOthers(original, filePath, fileType)
           fs.writeFileSync(distPath, code)
