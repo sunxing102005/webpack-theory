@@ -30,7 +30,7 @@ import {
   convertAstExpressionToVariable as toVar,
   convertSourceStringToAstExpression as toAst
 } from '../util/astConvert'
-import { BUILD_TYPES, processTypeEnum, PROJECT_CONFIG, REG_SCRIPTS, REG_TYPESCRIPT, DEFAULT_Component_SET } from '../util/constants'
+import { BUILD_TYPES, processTypeEnum, PROJECT_CONFIG, REG_SCRIPTS, REG_STYLE, REG_TYPESCRIPT, DEFAULT_Component_SET } from '../util/constants'
 import * as npmProcess from '../util/npm'
 import { IBuildOptions, IOption } from '../util/types'
 import {
@@ -51,6 +51,9 @@ import {
   removeLeadingSlash,
   resetTSClassProperty,
 } from './helper'
+import * as pxTransform from './pxtransform'
+const postcss = require('postcss')
+
 //@ts-ignore
 const { exec } = require('child_process');
 const chalk = require('chalk')
@@ -304,7 +307,16 @@ class Compiler {
         // this.processFlagFile()
       })
   }
-
+  transformPx(src, target){
+    const config = {...this.pxTransformConfig, platform:'bk'}
+    fs.readFile(src, (err, css) => {
+      postcss([pxTransform(config)])
+        .process(css, { from: src, to: target })
+        .then(result => {
+          fs.writeFile(target, result.css, () => true)
+        })
+    })
+  }
   async processEntry(code, filePath) {
     const pages = this.pages
     if (filePath === this.entryFilePath && this.isUi) {
@@ -1524,6 +1536,7 @@ class Compiler {
     const extname = path.extname(filePath)
     const distDirname = this.getTempDir(filePath, originalFilePath)
     const isScriptFile = REG_SCRIPTS.test(extname)
+    const isStyle = REG_STYLE.test(extname)
     const distPath = this.getDist(distDirname, filePath, isScriptFile)
     fs.ensureDirSync(distDirname)
 
@@ -1555,6 +1568,10 @@ class Compiler {
           }
         }
       } else {
+        if(isStyle){
+          console.log('filePath', filePath, distPath)
+          this.transformPx(filePath, distPath);
+        }
         // 其他 直接复制
         fs.copySync(filePath, distPath)
       }
