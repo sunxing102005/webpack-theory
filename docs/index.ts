@@ -1531,6 +1531,17 @@ class Compiler {
     delete pkgConfig.templateInfo
     fs.writeFileSync(path.join(distDirname, `package.json`), JSON.stringify(pkgConfig));
   }
+  mergeSubPackages2Pages(config) {
+    if (!config) return
+    const subPackages = config.subPackages || []
+    const pages = config.pages || []
+    subPackages.forEach(({root, pages: subPages}) => {
+      Array.isArray(subPages) && subPages.forEach((subPage: string) => {
+        pages.push(path.join(root, subPage))
+      })
+    })
+    delete config.subPackages
+  }
   async processFiles(filePath, originalFilePath) {
     const original = fs.readFileSync(filePath, { encoding: 'utf8' })
     const extname = path.extname(filePath)
@@ -1553,6 +1564,7 @@ class Compiler {
           let subPackages = this.filterSubPackages(this.mergeSubPackages(configObj.subPackages, subpackagesRouter));
           console.log('subPackages', subPackages)
           configObj.subPackages = subPackages;
+          this.mergeSubPackages2Pages(configObj) // bk不支持分包 合并到pages
           const jsonPath = distPath.replace(`.js`, '.json');
           const jsonStr = JSON.stringify(configObj);
           fs.writeFileSync(jsonPath, jsonStr);
